@@ -8,6 +8,7 @@ const {
   deleteUser,
   getAllRoles,
   createRole,
+  updateRole,
   deleteRole,
   getStats,
 } = require('../controllers/adminController');
@@ -27,6 +28,7 @@ router.delete('/users/:id', deleteUser);
 // Role management
 router.get('/roles', getAllRoles);
 router.post('/roles', createRole);
+router.put('/roles/:id', updateRole);
 router.delete('/roles/:id', deleteRole);
 
 module.exports = router;

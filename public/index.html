@@ -1040,9 +1040,11 @@
 <div class="modal-overlay" id="role-modal">
   <div class="modal">
     <div class="modal-title">Assign Role</div>
-    <div class="modal-subtitle" id="role-modal-subtitle">Enter a role name for this user.</div>
+    <div class="modal-subtitle" id="role-modal-subtitle">Select a role for this user.</div>
     <div class="modal-error" id="role-modal-error"></div>
-    <input class="modal-input" id="role-input" type="text" placeholder="e.g. editor, viewer, manager" />
+    <select class="modal-input" id="role-input" style="cursor:pointer;background:var(--surface2,#1e2235);color:var(--text1,#e2e8f0);border:1px solid var(--border,#2d3452);border-radius:8px;padding:10px 14px;width:100%;font-size:14px;">
+      <option value="" disabled selected>Loading roles…</option>
+    </select>
     <div class="modal-footer">
       <button class="btn btn-ghost btn-sm" onclick="closeModal('role-modal')">Cancel</button>
       <button class="btn btn-blue btn-sm" onclick="submitAssignRole()" id="assign-role-btn">Assign Role</button>
@@ -1061,6 +1063,21 @@
     <div class="modal-footer">
       <button class="btn btn-ghost btn-sm" onclick="closeModal('create-role-modal')">Cancel</button>
       <button class="btn btn-blue btn-sm" onclick="submitCreateRole()" id="create-role-btn">Create Role</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Role Modal -->
+<div class="modal-overlay" id="edit-role-modal">
+  <div class="modal">
+    <div class="modal-title">Edit Role</div>
+    <div class="modal-subtitle" id="edit-role-subtitle">Update role details.</div>
+    <div class="modal-error" id="edit-role-error"></div>
+    <input class="modal-input" id="edit-role-name" type="text" placeholder="Display name (e.g. Editor)" />
+    <input class="modal-input" id="edit-role-desc" type="text" placeholder="Description (optional)" />
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('edit-role-modal')">Cancel</button>
+      <button class="btn btn-blue btn-sm" onclick="submitEditRole()" id="edit-role-btn">Save Changes</button>
     </div>
   </div>
 </div>
@@ -1331,17 +1348,37 @@ function debounceSearch() {
 }
 
 // ─── ASSIGN ROLE ──────────────────────────────────────────
-function openAssignRole(id, name, currentRole) {
+async function openAssignRole(id, name, currentRole) {
   assignRoleUserId = id;
   document.getElementById('role-modal-subtitle').textContent = `Assigning role to ${name}`;
-  document.getElementById('role-input').value = currentRole || '';
   document.getElementById('role-modal-error').style.display = 'none';
+  const sel = document.getElementById('role-input');
+  sel.innerHTML = '<option value="" disabled>Loading roles…</option>';
   document.getElementById('role-modal').classList.add('open');
+  try {
+    const d = await api('GET', '/api/admin/roles');
+    const roles = d.data || [];
+    if (!roles.length) {
+      sel.innerHTML = '<option value="" disabled selected>No roles available — create one first</option>';
+    } else {
+      sel.innerHTML = '<option value="" disabled>— Select a role —</option>' +
+        roles.map(r => {
+          const val = r.name;
+          const label = r.displayName || r.name;
+          const selected = val === currentRole ? 'selected' : '';
+          return `<option value="${esc(val)}" ${selected}>${esc(label)}</option>`;
+        }).join('');
+      if (!currentRole) sel.selectedIndex = 0;
+    }
+  } catch (e) {
+    sel.innerHTML = '<option value="" disabled selected>Failed to load roles</option>';
+  }
 }
 
 async function submitAssignRole() {
-  const role = document.getElementById('role-input').value.trim();
-  if (!role) { showModalError('role-modal-error', 'Role name is required.'); return; }
+  const sel = document.getElementById('role-input');
+  const role = sel.value;
+  if (!role) { showModalError('role-modal-error', 'Please select a role.'); return; }
   const btn = document.getElementById('assign-role-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>';
@@ -1411,7 +1448,10 @@ async function loadRoles() {
         <div class="role-card-header">
           <div class="role-icon-wrap">🔑</div>
           ${!r.isSystem
-            ? `<button class="icon-btn danger" title="Delete role" onclick="openDeleteRole('${r._id}','${esc(r.displayName || r.name)}')">🗑</button>`
+            ? `<div style="display:flex;gap:6px">
+                <button class="icon-btn" title="Edit role" onclick="openEditRole('${r._id}','${esc(r.displayName || r.name)}','${esc(r.description || '')}')">✏️</button>
+                <button class="icon-btn danger" title="Delete role" onclick="openDeleteRole('${r._id}','${esc(r.displayName || r.name)}')">🗑</button>
+               </div>`
             : `<span class="badge badge-admin" style="font-size:10px">System</span>`}
         </div>
         <div class="role-name">${esc(r.displayName || r.name)}</div>
@@ -1431,6 +1471,36 @@ function openCreateRoleModal() {
   document.getElementById('new-role-desc').value = '';
   document.getElementById('create-role-error').style.display = 'none';
   document.getElementById('create-role-modal').classList.add('open');
+}
+
+let editRoleId = null;
+function openEditRole(id, displayName, description) {
+  editRoleId = id;
+  document.getElementById('edit-role-subtitle').textContent = `Editing role: ${displayName}`;
+  document.getElementById('edit-role-name').value = displayName;
+  document.getElementById('edit-role-desc').value = description;
+  document.getElementById('edit-role-error').style.display = 'none';
+  document.getElementById('edit-role-modal').classList.add('open');
+}
+
+async function submitEditRole() {
+  const name = document.getElementById('edit-role-name').value.trim();
+  const description = document.getElementById('edit-role-desc').value.trim();
+  if (!name) { showModalError('edit-role-error', 'Role name is required.'); return; }
+  const btn = document.getElementById('edit-role-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    await api('PUT', `/api/admin/roles/${editRoleId}`, { name, description });
+    toast('Role updated successfully.', 'success');
+    closeModal('edit-role-modal');
+    loadRoles();
+  } catch (e) {
+    showModalError('edit-role-error', e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
+  }
 }
 
 async function submitCreateRole() {

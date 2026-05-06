@@ -301,6 +301,57 @@ const createRole = async (req, res) => {
   }
 };
 
+// @desc    Update a role
+// @route   PUT /api/admin/roles/:id
+// @access  Super Admin
+const updateRole = async (req, res) => {
+  try {
+    const { data: role, error: findErr } = await supabase
+      .from('roles')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (findErr) throw findErr;
+    if (!role) return res.status(404).json({ success: false, message: 'Role not found.' });
+    if (role.is_system) {
+      return res.status(400).json({ success: false, message: 'Cannot edit a system role.' });
+    }
+
+    const { name, description } = req.body;
+    const updates = {};
+    if (name && name.trim()) {
+      updates.display_name = name.trim();
+    }
+    if (description !== undefined) {
+      updates.description = description;
+    }
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('roles')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (updateErr) throw updateErr;
+
+    res.json({
+      success: true,
+      message: 'Role updated.',
+      data: {
+        _id: updated.id,
+        name: updated.name,
+        displayName: updated.display_name,
+        description: updated.description,
+        isSystem: updated.is_system,
+        createdAt: updated.created_at,
+        updatedAt: updated.updated_at,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error.' });
+  }
+};
+
 // @desc    Delete a role
 // @route   DELETE /api/admin/roles/:id
 // @access  Super Admin
@@ -393,6 +444,7 @@ module.exports = {
   deleteUser,
   getAllRoles,
   createRole,
+  updateRole,
   deleteRole,
   getStats,
 };
