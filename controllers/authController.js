@@ -156,9 +156,21 @@ const getMe = async (req, res) => {
     if (error) throw error;
     if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
 
+    let permissions = [];
+    if (!user.is_super_admin && user.role) {
+      const { data: roleData } = await supabase
+        .from('roles')
+        .select('permissions')
+        .eq('name', user.role)
+        .maybeSingle();
+      if (roleData && Array.isArray(roleData.permissions)) {
+        permissions = roleData.permissions;
+      }
+    }
+
     res.json({
       success: true,
-      user: toPublicUser(user),
+      user: { ...toPublicUser(user), permissions },
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error.' });

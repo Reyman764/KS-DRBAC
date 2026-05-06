@@ -107,4 +107,37 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
-module.exports = { protect, requireSuperAdmin, requireRole, requireAuth };
+
+// Require a specific permission — checks the role's permissions array in Supabase
+const requirePermission = (permission) => {
+  return async (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+    // Super admin always passes
+    if (req.user.isSuperAdmin) return next();
+
+    const supabase = require('../config/supabase');
+    try {
+      const { data: roleData } = await supabase
+        .from('roles')
+        .select('permissions')
+        .eq('name', req.user.role)
+        .maybeSingle();
+
+      const perms = (roleData && Array.isArray(roleData.permissions)) ? roleData.permissions : [];
+      if (!perms.includes(permission)) {
+        return res.status(403).json({
+          success: false,
+          message: `Access denied. Missing permission: ${permission}`,
+        });
+      }
+      next();
+    } catch (e) {
+      return res.status(500).json({ success: false, message: 'Server error checking permissions.' });
+    }
+  };
+};
+
+module.exports = { protect, requireSuperAdmin, requireRole, requireAuth, requirePermission };
+

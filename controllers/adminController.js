@@ -379,6 +379,31 @@ const deleteRole = async (req, res) => {
   }
 };
 
+// @desc    Update permissions for a role
+// @route   PUT /api/admin/roles/:id/permissions
+// @access  Super Admin
+const updateRolePermissions = async (req, res) => {
+  try {
+    const { permissions } = req.body;
+    if (!Array.isArray(permissions)) {
+      return res.status(400).json({ success: false, message: 'Permissions must be an array.' });
+    }
+    const { data: role, error: findErr } = await supabase
+      .from('roles').select('*').eq('id', req.params.id).maybeSingle();
+    if (findErr) throw findErr;
+    if (!role) return res.status(404).json({ success: false, message: 'Role not found.' });
+    if (role.is_system) return res.status(400).json({ success: false, message: 'Cannot modify system role permissions.' });
+
+    const { error: updateErr } = await supabase
+      .from('roles').update({ permissions }).eq('id', req.params.id);
+    if (updateErr) throw updateErr;
+
+    res.json({ success: true, message: 'Permissions saved.', data: { permissions } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error.' });
+  }
+};
+
 // @desc    Get dashboard stats
 // @route   GET /api/admin/stats
 // @access  Super Admin
@@ -446,5 +471,6 @@ module.exports = {
   createRole,
   updateRole,
   deleteRole,
+  updateRolePermissions,
   getStats,
 };

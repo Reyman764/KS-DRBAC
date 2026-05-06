@@ -665,6 +665,43 @@
     .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
 
     /* ── ROLE CARDS ── */
+    /* ── Permissions Panel ── */
+    .perm-layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+    .perm-role-list { display: flex; flex-direction: column; gap: 8px; min-width: 180px; flex-shrink: 0; }
+    .perm-role-tab {
+      padding: 10px 16px; border-radius: 10px; cursor: pointer;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text2); font-size: 13px; font-weight: 500;
+      transition: all .15s; display: flex; align-items: center; gap: 10px;
+    }
+    .perm-role-tab:hover { border-color: var(--border2); color: var(--text); }
+    .perm-role-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .perm-panel {
+      flex: 1; min-width: 300px; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 14px; padding: 24px;
+    }
+    .perm-panel-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .perm-panel-sub   { font-size: 12px; color: var(--text3); margin-bottom: 20px; }
+    .perm-group { margin-bottom: 24px; }
+    .perm-group-label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--text3); margin-bottom: 12px;
+      padding-bottom: 6px; border-bottom: 1px solid var(--border);
+    }
+    .perm-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+    .perm-check-item {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 14px; cursor: pointer;
+      transition: border-color .15s;
+    }
+    .perm-check-item:hover { border-color: var(--border2); }
+    .perm-check-item input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; }
+    .perm-check-label { font-size: 13px; color: var(--text2); cursor: pointer; line-height: 1.3; }
+    .perm-check-label strong { display: block; color: var(--text); font-size: 13px; font-weight: 500; }
+    .perm-check-label span  { font-size: 11px; color: var(--text3); }
+    .perm-save-bar { display: flex; justify-content: flex-end; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+
     .roles-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -873,11 +910,14 @@
       </div>
 
       <div class="nav-section-label admin-only" style="display:none">Management</div>
-      <div class="nav-item admin-only" style="display:none" onclick="showView('users')">
+      <div class="nav-item admin-only" style="display:none" data-permission="users:view" onclick="showView('users')">
         <span class="nav-icon">👥</span> Users
       </div>
-      <div class="nav-item admin-only" style="display:none" onclick="showView('roles')">
+      <div class="nav-item admin-only" style="display:none" data-permission="roles:view" onclick="showView('roles')">
         <span class="nav-icon">🔑</span> Roles
+      </div>
+      <div class="nav-item admin-only" style="display:none" data-permission="permissions:view" onclick="showView('permissions')">
+        <span class="nav-icon">🛡️</span> Permissions
       </div>
     </nav>
 
@@ -1023,10 +1063,23 @@
             <div class="section-title">Roles</div>
             <div class="section-subtitle">Define access levels</div>
           </div>
-          <button class="btn btn-blue btn-sm" onclick="openCreateRoleModal()">＋ New Role</button>
+          ${hasPermission('roles:create') ? `<button class="btn btn-blue btn-sm" onclick="openCreateRoleModal()">＋ New Role</button>` : ''}
         </div>
         <div class="roles-grid" id="roles-grid">
           <div style="grid-column:1/-1;text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div></div>
+        </div>
+      </div>
+
+      <div class="view" id="view-permissions">
+        <div class="section-header">
+          <div>
+            <div class="section-title">Permissions</div>
+            <div class="section-subtitle">Control what each role can access</div>
+          </div>
+        </div>
+        <div id="permissions-container" style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+          <!-- Role tabs on left, permission checklist on right — filled by JS -->
+          <div style="text-align:center;padding:40px;width:100%"><div class="spinner" style="margin:0 auto"></div></div>
         </div>
       </div>
 
@@ -1157,8 +1210,10 @@ async function doLogin() {
   try {
     const data = await api('POST', '/api/auth/login', { email, password });
     token = data.token;
-    currentUser = data.user;
     localStorage.setItem('drbac_token', token);
+    // Fetch full profile including role permissions
+    const me = await api('GET', '/api/auth/me');
+    currentUser = me.user;
     enterDashboard();
   } catch (e) {
     showAuthError(e.message);
@@ -1212,16 +1267,33 @@ function enterDashboard() {
     document.getElementById('sb-role').textContent = currentUser.isSuperAdmin ? 'Super Admin' : (currentUser.role || 'user');
 
     const isSuper = currentUser.isSuperAdmin;
-    document.querySelectorAll('.admin-only').forEach(el => {
-      el.style.display = isSuper ? '' : 'none';
+    const userPerms = new Set(currentUser.permissions || []);
+
+    // Show management section label if user has any management permission
+    const hasAnyManagement = isSuper ||
+      userPerms.has('users:view') || userPerms.has('roles:view') || userPerms.has('permissions:view');
+    document.querySelector('.nav-section-label.admin-only').style.display = hasAnyManagement ? '' : 'none';
+
+    // Show each nav item based on super admin OR specific permission
+    document.querySelectorAll('.nav-item.admin-only[data-permission]').forEach(el => {
+      const perm = el.dataset.permission;
+      el.style.display = (isSuper || userPerms.has(perm)) ? '' : 'none';
     });
   }
   showView('dashboard');
 }
 
+function hasPermission(perm) {
+  if (!currentUser) return false;
+  if (currentUser.isSuperAdmin) return true;
+  return (currentUser.permissions || []).includes(perm);
+}
+
 function showView(name) {
-  if ((name === 'users' || name === 'roles') && currentUser && !currentUser.isSuperAdmin) {
-    toast('Access denied. Super Admin only.', 'error');
+  const permMap = { users: 'users:view', roles: 'roles:view', permissions: 'permissions:view' };
+  const requiredPerm = permMap[name];
+  if (requiredPerm && currentUser && !hasPermission(requiredPerm)) {
+    toast('Access denied. You do not have permission to view this section.', 'error');
     return;
   }
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -1231,16 +1303,18 @@ function showView(name) {
   if (navEl) navEl.classList.add('active');
 
   const titles = {
-    dashboard: ['Dashboard',   'System overview'],
-    users:     ['Users',       'Manage user accounts'],
-    roles:     ['Roles',       'Manage access roles'],
+    dashboard:   ['Dashboard',   'System overview'],
+    users:       ['Users',       'Manage user accounts'],
+    roles:       ['Roles',       'Manage access roles'],
+    permissions: ['Permissions', 'Control role access'],
   };
   document.getElementById('topbar-title').textContent    = titles[name][0];
   document.getElementById('topbar-subtitle').textContent = titles[name][1];
 
-  if (name === 'dashboard') loadStats();
-  if (name === 'users')     loadUsers();
-  if (name === 'roles')     loadRoles();
+  if (name === 'dashboard')   loadStats();
+  if (name === 'users')       loadUsers();
+  if (name === 'roles')       loadRoles();
+  if (name === 'permissions') loadPermissions();
   closeSidebar();
 }
 
@@ -1313,9 +1387,9 @@ async function loadUsers(page = 1) {
           <td style="color:var(--text3);font-size:12px;font-family:var(--mono)">${u.lastLogin ? fmtDate(u.lastLogin) : '—'}</td>
           <td class="actions">
             ${!u.isSuperAdmin ? `
-              <button class="icon-btn" title="Assign Role" onclick="openAssignRole('${u._id}','${esc(u.name)}','${esc(u.role||'')}')">🔑</button>
-              <button class="icon-btn" title="${u.isActive ? 'Deactivate' : 'Activate'}" onclick="toggleStatus('${u._id}','${esc(u.name)}',${u.isActive})">${u.isActive ? '🔒' : '🔓'}</button>
-              <button class="icon-btn danger" title="Delete User" onclick="openDeleteUser('${u._id}','${esc(u.name)}')">🗑</button>
+              ${hasPermission('users:assign_role') ? `<button class="icon-btn" title="Assign Role" onclick="openAssignRole('${u._id}','${esc(u.name)}','${esc(u.role||'')}')">🔑</button>` : ''}
+              ${hasPermission('users:toggle_status') ? `<button class="icon-btn" title="${u.isActive ? 'Deactivate' : 'Activate'}" onclick="toggleStatus('${u._id}','${esc(u.name)}',${u.isActive})">${u.isActive ? '🔒' : '🔓'}</button>` : ''}
+              ${hasPermission('users:delete') ? `<button class="icon-btn danger" title="Delete User" onclick="openDeleteUser('${u._id}','${esc(u.name)}')">🗑</button>` : ''}
             ` : '<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">Protected</span>'}
           </td>
         </tr>`).join('');
@@ -1449,8 +1523,8 @@ async function loadRoles() {
           <div class="role-icon-wrap">🔑</div>
           ${!r.isSystem
             ? `<div style="display:flex;gap:6px">
-                <button class="icon-btn" title="Edit role" onclick="openEditRole('${r._id}','${esc(r.displayName || r.name)}','${esc(r.description || '')}')">✏️</button>
-                <button class="icon-btn danger" title="Delete role" onclick="openDeleteRole('${r._id}','${esc(r.displayName || r.name)}')">🗑</button>
+                ${hasPermission('roles:edit') ? `<button class="icon-btn" title="Edit role" onclick="openEditRole('${r._id}','${esc(r.displayName || r.name)}','${esc(r.description || '')}')">✏️</button>` : ''}
+                ${hasPermission('roles:delete') ? `<button class="icon-btn danger" title="Delete role" onclick="openDeleteRole('${r._id}','${esc(r.displayName || r.name)}')">🗑</button>` : ''}
                </div>`
             : `<span class="badge badge-admin" style="font-size:10px">System</span>`}
         </div>
@@ -1463,6 +1537,132 @@ async function loadRoles() {
       </div>`).join('');
   } catch (e) {
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">⚠️</div><div class="empty-title">Failed to load roles</div><div class="empty-desc">${esc(e.message)}</div></div>`;
+  }
+}
+
+// ─── PERMISSIONS ──────────────────────────────────────────
+const PERMISSION_GROUPS = [
+  {
+    label: 'User Management',
+    perms: [
+      { key: 'users:view',          name: 'View Users',          desc: 'See user list & details' },
+      { key: 'users:create',        name: 'Create Users',        desc: 'Add new users' },
+      { key: 'users:edit',          name: 'Edit Users',          desc: 'Update user info' },
+      { key: 'users:delete',        name: 'Delete Users',        desc: 'Remove users permanently' },
+      { key: 'users:toggle_status', name: 'Toggle User Status',  desc: 'Activate or deactivate users' },
+      { key: 'users:assign_role',   name: 'Assign Roles',        desc: 'Change a user\'s role' },
+    ],
+  },
+  {
+    label: 'Role Management',
+    perms: [
+      { key: 'roles:view',   name: 'View Roles',   desc: 'See all roles' },
+      { key: 'roles:create', name: 'Create Roles', desc: 'Add new roles' },
+      { key: 'roles:edit',   name: 'Edit Roles',   desc: 'Update role details' },
+      { key: 'roles:delete', name: 'Delete Roles', desc: 'Remove roles' },
+    ],
+  },
+  {
+    label: 'Dashboard & Reports',
+    perms: [
+      { key: 'dashboard:view',   name: 'View Dashboard', desc: 'Access the main dashboard' },
+      { key: 'dashboard:stats',  name: 'View Stats',     desc: 'See user & role statistics' },
+      { key: 'reports:export',   name: 'Export Data',    desc: 'Download reports & exports' },
+    ],
+  },
+  {
+    label: 'Permissions',
+    perms: [
+      { key: 'permissions:view',   name: 'View Permissions',   desc: 'See permission settings' },
+      { key: 'permissions:manage', name: 'Manage Permissions', desc: 'Edit role permissions' },
+    ],
+  },
+];
+
+let permRoles = [];
+let activePermRoleId = null;
+
+async function loadPermissions() {
+  const container = document.getElementById('permissions-container');
+  container.innerHTML = `<div style="text-align:center;padding:40px;width:100%"><div class="spinner" style="margin:0 auto"></div></div>`;
+  try {
+    const d = await api('GET', '/api/admin/roles');
+    permRoles = (d.data || []).filter(r => !r.isSystem);
+    if (!permRoles.length) {
+      container.innerHTML = `<div class="empty-state" style="width:100%"><div class="empty-icon">🛡️</div><div class="empty-title">No custom roles yet</div><div class="empty-desc">Create a role first, then manage its permissions here.</div></div>`;
+      return;
+    }
+    activePermRoleId = permRoles[0]._id;
+    renderPermissionsUI();
+  } catch (e) {
+    container.innerHTML = `<div class="empty-state" style="width:100%"><div class="empty-icon">⚠️</div><div class="empty-title">Failed to load</div><div class="empty-desc">${esc(e.message)}</div></div>`;
+  }
+}
+
+function renderPermissionsUI() {
+  const container = document.getElementById('permissions-container');
+  const activeRole = permRoles.find(r => r._id === activePermRoleId);
+
+  const tabsHtml = permRoles.map(r => `
+    <div class="perm-role-tab ${r._id === activePermRoleId ? 'active' : ''}" onclick="selectPermRole('${r._id}')">
+      🔑 ${esc(r.displayName || r.name)}
+    </div>`).join('');
+
+  const activePerms = new Set(activeRole ? (activeRole.permissions || []) : []);
+
+  const groupsHtml = PERMISSION_GROUPS.map(g => `
+    <div class="perm-group">
+      <div class="perm-group-label">${g.label}</div>
+      <div class="perm-checks">
+        ${g.perms.map(p => `
+          <label class="perm-check-item">
+            <input type="checkbox" data-perm="${p.key}" ${activePerms.has(p.key) ? 'checked' : ''} onchange="onPermChange()" />
+            <span class="perm-check-label">
+              <strong>${p.name}</strong>
+              <span>${p.desc}</span>
+            </span>
+          </label>`).join('')}
+      </div>
+    </div>`).join('');
+
+  container.innerHTML = `
+    <div class="perm-layout">
+      <div class="perm-role-list">${tabsHtml}</div>
+      <div class="perm-panel">
+        <div class="perm-panel-title">🛡️ ${esc(activeRole ? (activeRole.displayName || activeRole.name) : '')} — Permissions</div>
+        <div class="perm-panel-sub">Check or uncheck permissions for this role. Changes are saved when you click Save.</div>
+        ${groupsHtml}
+        <div class="perm-save-bar">
+          <button class="btn btn-blue btn-sm" id="perm-save-btn" onclick="savePermissions()">Save Permissions</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function selectPermRole(id) {
+  activePermRoleId = id;
+  renderPermissionsUI();
+}
+
+function onPermChange() { /* live — no-op, saved on button click */ }
+
+async function savePermissions() {
+  const checked = [...document.querySelectorAll('#permissions-container input[type=checkbox]:checked')]
+    .map(el => el.dataset.perm);
+  const btn = document.getElementById('perm-save-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    await api('PUT', `/api/admin/roles/${activePermRoleId}/permissions`, { permissions: checked });
+    // Update local cache
+    const role = permRoles.find(r => r._id === activePermRoleId);
+    if (role) role.permissions = checked;
+    toast('Permissions saved successfully.', 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Permissions';
   }
 }
 
