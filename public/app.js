@@ -1,15 +1,60 @@
 /* ══════════════════════════════════════════════════════
-   DRBAC — app.js  |  All application logic
+   DRBAC — app.js  |  Dynamic Role-Based Access Control
+   Final version with permission checkboxes in create/edit
 ══════════════════════════════════════════════════════ */
 
-let token        = localStorage.getItem('drbac_token') || '';
-let currentUser  = null;
+let token             = localStorage.getItem('drbac_token') || '';
+let currentUser       = null;
 let pendingDeleteFn   = null;
 let assignRoleUserId  = null;
 let usersPage         = 1;
 let usersTotalPages   = 1;
 let searchTimer       = null;
 let editRoleId        = null;
+
+/* ────────────────────────────────────────────────────
+   PERMISSION GROUPS — single source of truth for the
+   entire frontend (permissions view + modal checkboxes)
+──────────────────────────────────────────────────── */
+const PERMISSION_GROUPS = [
+  {
+    label: 'User Management',
+    perms: [
+      { key: 'users:view',          name: 'View Users',       desc: 'See user list & details' },
+      { key: 'users:create',        name: 'Create Users',     desc: 'Add new users' },
+      { key: 'users:edit',          name: 'Edit Users',       desc: 'Update user info' },
+      { key: 'users:delete',        name: 'Delete Users',     desc: 'Remove users permanently' },
+      { key: 'users:toggle_status', name: 'Toggle Status',    desc: 'Activate or deactivate users' },
+      { key: 'users:assign_role',   name: 'Assign Roles',     desc: "Change a user's role" },
+    ],
+  },
+  {
+    label: 'Role Management',
+    perms: [
+      { key: 'roles:view',   name: 'View Roles',   desc: 'See all roles' },
+      { key: 'roles:create', name: 'Create Roles', desc: 'Add new roles' },
+      { key: 'roles:edit',   name: 'Edit Roles',   desc: 'Update role details' },
+      { key: 'roles:delete', name: 'Delete Roles', desc: 'Remove roles' },
+    ],
+  },
+  {
+    label: 'Dashboard & Reports',
+    perms: [
+      { key: 'dashboard:view',  name: 'View Dashboard', desc: 'Access the main dashboard' },
+      { key: 'dashboard:stats', name: 'View Stats',      desc: 'See user & role statistics' },
+      { key: 'reports:export',  name: 'Export Data',     desc: 'Download reports & exports' },
+    ],
+  },
+  {
+    label: 'Permissions',
+    perms: [
+      { key: 'permissions:view',   name: 'View Permissions',   desc: 'See permission settings' },
+      { key: 'permissions:manage', name: 'Manage Permissions', desc: 'Edit role permissions' },
+    ],
+  },
+];
+
+const ALL_PERMS = PERMISSION_GROUPS.flatMap(g => g.perms.map(p => p.key));
 
 /* ────────────────────────────────────────────────────
    API HELPER
@@ -30,7 +75,7 @@ async function api(method, path, body) {
    TOAST
 ──────────────────────────────────────────────────── */
 function toast(msg, type = 'info') {
-  const el   = document.createElement('div');
+  const el = document.createElement('div');
   el.className = `toast-item toast-${type}`;
   const icon = type === 'success' ? '✓' : type === 'error' ? '✕' : 'ℹ';
   el.innerHTML = `<span>${icon}</span><span>${esc(msg)}</span>`;
@@ -52,7 +97,7 @@ function switchTab(tab) {
 
 function showAuthError(msg) {
   const el = document.getElementById('auth-error');
-  el.textContent = msg;
+  el.textContent  = msg;
   el.style.display = '';
 }
 
@@ -65,7 +110,7 @@ async function doLogin() {
   const password = document.getElementById('login-password').value;
   if (!email || !password) return showAuthError('Please fill in all fields.');
   const btn = document.getElementById('login-btn');
-  btn.disabled = true;
+  btn.disabled  = true;
   btn.innerHTML = '<span class="spinner"></span> Signing in…';
   clearAuthError();
   try {
@@ -78,7 +123,7 @@ async function doLogin() {
   } catch (e) {
     showAuthError(e.message);
   } finally {
-    btn.disabled  = false;
+    btn.disabled    = false;
     btn.textContent = 'Sign In';
   }
 }
@@ -89,25 +134,25 @@ async function doSignup() {
   const password = document.getElementById('signup-password').value;
   if (!name || !email || !password) return showAuthError('Please fill in all fields.');
   const btn = document.getElementById('signup-btn');
-  btn.disabled = true;
+  btn.disabled  = true;
   btn.innerHTML = '<span class="spinner"></span> Creating account…';
   clearAuthError();
   try {
     const data = await api('POST', '/api/auth/signup', { name, email, password });
-    token = data.token;
+    token       = data.token;
     currentUser = data.user;
     localStorage.setItem('drbac_token', token);
     enterDashboard();
   } catch (e) {
     showAuthError(e.message);
   } finally {
-    btn.disabled  = false;
+    btn.disabled    = false;
     btn.textContent = 'Create Account';
   }
 }
 
 function logout() {
-  token = '';
+  token       = '';
   currentUser = null;
   localStorage.removeItem('drbac_token');
   document.getElementById('auth-page').classList.remove('hidden');
@@ -121,28 +166,28 @@ function logout() {
 function enterDashboard() {
   document.getElementById('auth-page').classList.add('hidden');
   document.getElementById('dashboard-page').style.display = 'block';
-
   if (!currentUser) return;
 
   const initials = currentUser.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
   document.getElementById('sb-avatar').textContent = initials;
   document.getElementById('sb-name').textContent   = currentUser.name;
   document.getElementById('sb-role').textContent   = currentUser.isSuperAdmin
-    ? 'Super Admin'
-    : (currentUser.role || 'user');
+    ? 'Super Admin' : (currentUser.role || 'user');
 
   const isSuper   = currentUser.isSuperAdmin;
   const userPerms = new Set(currentUser.permissions || []);
 
-  const hasAnyMgmt = isSuper ||
-    userPerms.has('users:view') || userPerms.has('roles:view') || userPerms.has('permissions:view');
+  const hasAnyMgmt = isSuper
+    || userPerms.has('users:view')
+    || userPerms.has('roles:view')
+    || userPerms.has('permissions:view');
 
   document.querySelector('.nav-section-label.admin-only').style.display = hasAnyMgmt ? '' : 'none';
   document.querySelectorAll('.nav-item.admin-only[data-permission]').forEach(el => {
     el.style.display = (isSuper || userPerms.has(el.dataset.permission)) ? '' : 'none';
   });
 
-  // Build "New Role" button once we know who the user is
+  // Show "New Role" button if user can create roles
   const actionsEl = document.getElementById('roles-header-actions');
   if (actionsEl) {
     actionsEl.innerHTML = hasPermission('roles:create')
@@ -153,6 +198,9 @@ function enterDashboard() {
   showView('dashboard');
 }
 
+/* ────────────────────────────────────────────────────
+   PERMISSION HELPER
+──────────────────────────────────────────────────── */
 function hasPermission(perm) {
   if (!currentUser) return false;
   if (currentUser.isSuperAdmin) return true;
@@ -163,8 +211,8 @@ function hasPermission(perm) {
    VIEW ROUTING
 ──────────────────────────────────────────────────── */
 function showView(name) {
-  const permMap  = { users: 'users:view', roles: 'roles:view', permissions: 'permissions:view' };
-  const reqPerm  = permMap[name];
+  const permMap = { users: 'users:view', roles: 'roles:view', permissions: 'permissions:view' };
+  const reqPerm = permMap[name];
   if (reqPerm && !hasPermission(reqPerm)) {
     toast('Access denied. You do not have permission to view this section.', 'error');
     return;
@@ -245,7 +293,8 @@ async function loadUsers(page = 1) {
     const q = `/api/admin/users?page=${page}&limit=15${search ? '&search=' + encodeURIComponent(search) : ''}`;
     const d = await api('GET', q);
     usersTotalPages = d.pagination.pages || 1;
-    document.getElementById('users-count-label').textContent = `${d.pagination.total} user${d.pagination.total !== 1 ? 's' : ''}`;
+    document.getElementById('users-count-label').textContent =
+      `${d.pagination.total} user${d.pagination.total !== 1 ? 's' : ''}`;
 
     if (!d.data.length) {
       tbody.innerHTML = emptyRow(5, '👤', 'No users found', 'Try adjusting your search');
@@ -253,7 +302,9 @@ async function loadUsers(page = 1) {
       tbody.innerHTML = d.data.map(u => `
         <tr>
           <td>${userCell(u.name, u.email)}</td>
-          <td><span class="badge ${u.isSuperAdmin ? 'badge-admin' : 'badge-role'}">${u.isSuperAdmin ? '⭐ super admin' : esc(u.role || 'user')}</span></td>
+          <td><span class="badge ${u.isSuperAdmin ? 'badge-admin' : 'badge-role'}">${
+            u.isSuperAdmin ? '⭐ super admin' : esc(u.role || 'user')
+          }</span></td>
           <td>${statusBadge(u.isActive)}</td>
           <td style="color:var(--text3);font-size:12px;font-family:var(--mono)">${u.lastLogin ? fmtDate(u.lastLogin) : '—'}</td>
           <td class="actions">${u.isSuperAdmin
@@ -271,7 +322,7 @@ async function loadUsers(page = 1) {
 function userActions(u) {
   return [
     hasPermission('users:assign_role')
-      ? `<button class="icon-btn" title="Assign Role" onclick="openAssignRole('${u._id}','${esc(u.name)}','${esc(u.role||'')}')">🔑</button>` : '',
+      ? `<button class="icon-btn" title="Assign Role" onclick="openAssignRole('${u._id}','${esc(u.name)}','${esc(u.role || '')}')">🔑</button>` : '',
     hasPermission('users:toggle_status')
       ? `<button class="icon-btn" title="${u.isActive ? 'Deactivate' : 'Activate'}" onclick="toggleStatus('${u._id}','${esc(u.name)}',${u.isActive})">${u.isActive ? '🔒' : '🔓'}</button>` : '',
     hasPermission('users:delete')
@@ -300,7 +351,7 @@ function debounceSearch() {
   searchTimer = setTimeout(() => loadUsers(1), 400);
 }
 
-/* ── ASSIGN ROLE ──────────────────────────────── */
+/* ── ASSIGN ROLE — dropdown populated from /api/admin/roles ── */
 async function openAssignRole(id, name, currentRole) {
   assignRoleUserId = id;
   document.getElementById('role-modal-subtitle').textContent = `Assigning role to ${name}`;
@@ -310,7 +361,7 @@ async function openAssignRole(id, name, currentRole) {
   document.getElementById('role-modal').classList.add('open');
   try {
     const d     = await api('GET', '/api/admin/roles');
-    const roles = d.data || [];
+    const roles = (d.data || []).filter(r => !r.isSystem);
     if (!roles.length) {
       sel.innerHTML = '<option value="" disabled selected>No roles available — create one first</option>';
     } else {
@@ -345,7 +396,7 @@ async function submitAssignRole() {
   }
 }
 
-/* ── TOGGLE STATUS ────────────────────────────── */
+/* ── TOGGLE STATUS ── */
 async function toggleStatus(id, name, isActive) {
   try {
     await api('PUT', `/api/admin/users/${id}/toggle-status`);
@@ -356,7 +407,7 @@ async function toggleStatus(id, name, isActive) {
   }
 }
 
-/* ── DELETE USER ──────────────────────────────── */
+/* ── DELETE USER ── */
 function openDeleteUser(id, name) {
   document.getElementById('delete-modal-subtitle').textContent =
     `Delete user "${name}"? This action cannot be undone.`;
@@ -407,8 +458,10 @@ async function loadRoles() {
           ${r.isSystem
             ? `<span class="badge badge-system">System</span>`
             : `<div style="display:flex;gap:6px">
-                ${hasPermission('roles:edit')   ? `<button class="icon-btn" title="Edit role" onclick="openEditRole('${r._id}','${esc(r.displayName || r.name)}','${esc(r.description || '')}')">✏️</button>` : ''}
-                ${hasPermission('roles:delete') ? `<button class="icon-btn danger" title="Delete role" onclick="openDeleteRole('${r._id}','${esc(r.displayName || r.name)}')">🗑</button>` : ''}
+                ${hasPermission('roles:edit')
+                  ? `<button class="icon-btn" title="Edit role" onclick="openEditRole('${r._id}','${esc(r.displayName || r.name)}','${esc(r.description || '')}',${JSON.stringify(r.permissions || [])})">✏️</button>` : ''}
+                ${hasPermission('roles:delete')
+                  ? `<button class="icon-btn danger" title="Delete role" onclick="openDeleteRole('${r._id}','${esc(r.displayName || r.name)}')">🗑</button>` : ''}
                </div>`}
         </div>
         <div class="role-name">${esc(r.displayName || r.name)}</div>
@@ -424,10 +477,12 @@ async function loadRoles() {
   }
 }
 
+/* ── CREATE ROLE — with permission checkboxes ── */
 function openCreateRoleModal() {
   document.getElementById('new-role-name').value = '';
   document.getElementById('new-role-desc').value = '';
   document.getElementById('create-role-error').style.display = 'none';
+  renderModalPermCheckboxes('create-role-perms', []);
   document.getElementById('create-role-modal').classList.add('open');
   setTimeout(() => document.getElementById('new-role-name').focus(), 60);
 }
@@ -436,13 +491,16 @@ async function submitCreateRole() {
   const name        = document.getElementById('new-role-name').value.trim();
   const description = document.getElementById('new-role-desc').value.trim();
   if (!name) { showModalError('create-role-error', 'Role name is required.'); return; }
+  const permissions = getCheckedPerms('create-role-perms');
   const btn = document.getElementById('create-role-btn');
   setBtnLoading(btn, true);
   try {
-    await api('POST', '/api/admin/roles', { name, description });
-    toast(`Role "${name}" created.`, 'success');
+    await api('POST', '/api/admin/roles', { name, description, permissions });
+    toast(`Role "${name}" created with ${permissions.length} permission(s).`, 'success');
     closeModal('create-role-modal');
     loadRoles();
+    // Reload permissions view if active
+    if (document.getElementById('view-permissions').classList.contains('active')) loadPermissions();
   } catch (e) {
     showModalError('create-role-error', e.message);
   } finally {
@@ -450,12 +508,14 @@ async function submitCreateRole() {
   }
 }
 
-function openEditRole(id, displayName, description) {
+/* ── EDIT ROLE — with permission checkboxes pre-populated ── */
+function openEditRole(id, displayName, description, permissions) {
   editRoleId = id;
   document.getElementById('edit-role-subtitle').textContent = `Editing: ${displayName}`;
   document.getElementById('edit-role-name').value           = displayName;
   document.getElementById('edit-role-desc').value           = description;
   document.getElementById('edit-role-error').style.display  = 'none';
+  renderModalPermCheckboxes('edit-role-perms', permissions || []);
   document.getElementById('edit-role-modal').classList.add('open');
   setTimeout(() => document.getElementById('edit-role-name').focus(), 60);
 }
@@ -464,13 +524,17 @@ async function submitEditRole() {
   const name        = document.getElementById('edit-role-name').value.trim();
   const description = document.getElementById('edit-role-desc').value.trim();
   if (!name) { showModalError('edit-role-error', 'Role name is required.'); return; }
+  const permissions = getCheckedPerms('edit-role-perms');
   const btn = document.getElementById('edit-role-btn');
   setBtnLoading(btn, true);
   try {
-    await api('PUT', `/api/admin/roles/${editRoleId}`, { name, description });
+    // Single call: updateRole now accepts permissions too
+    await api('PUT', `/api/admin/roles/${editRoleId}`, { name, description, permissions });
     toast('Role updated successfully.', 'success');
     closeModal('edit-role-modal');
     loadRoles();
+    // Refresh permissions view & standalone perm panel if open
+    if (document.getElementById('view-permissions').classList.contains('active')) loadPermissions();
   } catch (e) {
     showModalError('edit-role-error', e.message);
   } finally {
@@ -478,6 +542,7 @@ async function submitEditRole() {
   }
 }
 
+/* ── DELETE ROLE ── */
 function openDeleteRole(id, name) {
   document.getElementById('delete-modal-subtitle').textContent =
     `Delete role "${name}"? Users with this role will be reset to "user".`;
@@ -490,49 +555,57 @@ function openDeleteRole(id, name) {
 }
 
 /* ────────────────────────────────────────────────────
-   PERMISSIONS
+   MODAL PERMISSION CHECKBOX HELPERS
 ──────────────────────────────────────────────────── */
-const PERMISSION_GROUPS = [
-  {
-    label: 'User Management',
-    perms: [
-      { key: 'users:view',          name: 'View Users',         desc: 'See user list & details' },
-      { key: 'users:create',        name: 'Create Users',       desc: 'Add new users' },
-      { key: 'users:edit',          name: 'Edit Users',         desc: 'Update user info' },
-      { key: 'users:delete',        name: 'Delete Users',       desc: 'Remove users permanently' },
-      { key: 'users:toggle_status', name: 'Toggle Status',      desc: 'Activate or deactivate users' },
-      { key: 'users:assign_role',   name: 'Assign Roles',       desc: "Change a user's role" },
-    ],
-  },
-  {
-    label: 'Role Management',
-    perms: [
-      { key: 'roles:view',   name: 'View Roles',   desc: 'See all roles' },
-      { key: 'roles:create', name: 'Create Roles', desc: 'Add new roles' },
-      { key: 'roles:edit',   name: 'Edit Roles',   desc: 'Update role details' },
-      { key: 'roles:delete', name: 'Delete Roles', desc: 'Remove roles' },
-    ],
-  },
-  {
-    label: 'Dashboard & Reports',
-    perms: [
-      { key: 'dashboard:view',  name: 'View Dashboard', desc: 'Access the main dashboard' },
-      { key: 'dashboard:stats', name: 'View Stats',      desc: 'See user & role statistics' },
-      { key: 'reports:export',  name: 'Export Data',     desc: 'Download reports & exports' },
-    ],
-  },
-  {
-    label: 'Permissions',
-    perms: [
-      { key: 'permissions:view',   name: 'View Permissions',   desc: 'See permission settings' },
-      { key: 'permissions:manage', name: 'Manage Permissions', desc: 'Edit role permissions' },
-    ],
-  },
-];
+/**
+ * Render grouped permission checkboxes inside a container element.
+ * @param {string} containerId  - id of the container div
+ * @param {string[]} checked    - keys that should be pre-checked
+ */
+function renderModalPermCheckboxes(containerId, checked) {
+  const container  = document.getElementById(containerId);
+  const checkedSet = new Set(checked);
+  container.innerHTML = PERMISSION_GROUPS.map(g => `
+    <div class="mperm-group">
+      <div class="mperm-group-label">${g.label}</div>
+      <div class="mperm-checks">
+        ${g.perms.map(p => `
+          <label class="mperm-item">
+            <input type="checkbox" data-perm="${p.key}" ${checkedSet.has(p.key) ? 'checked' : ''} />
+            <span class="mperm-label">
+              <strong>${p.name}</strong>
+              <span>${p.desc}</span>
+            </span>
+          </label>`).join('')}
+      </div>
+    </div>`).join('');
+}
 
-const ALL_PERMS = PERMISSION_GROUPS.flatMap(g => g.perms.map(p => p.key));
+/**
+ * Read checked permissions from a modal container.
+ * @param {string} containerId
+ * @returns {string[]}
+ */
+function getCheckedPerms(containerId) {
+  return [...document.querySelectorAll(`#${containerId} input[type=checkbox]:checked`)]
+    .map(el => el.dataset.perm);
+}
 
-let permRoles       = [];
+/**
+ * Select-all / clear-all for a modal's permission checkboxes.
+ * @param {'create'|'edit'} which
+ * @param {boolean} checked
+ */
+function modalToggleAllPerms(which, checked) {
+  const containerId = which === 'create' ? 'create-role-perms' : 'edit-role-perms';
+  document.querySelectorAll(`#${containerId} input[type=checkbox]`)
+    .forEach(cb => cb.checked = checked);
+}
+
+/* ────────────────────────────────────────────────────
+   PERMISSIONS VIEW (standalone per-role panel)
+──────────────────────────────────────────────────── */
+let permRoles        = [];
 let activePermRoleId = null;
 
 async function loadPermissions() {
@@ -566,9 +639,8 @@ function renderPermissionsUI() {
       🔑 ${esc(r.displayName || r.name)}
     </div>`).join('');
 
-  const totalPerms = ALL_PERMS.length;
+  const totalPerms   = ALL_PERMS.length;
   const checkedCount = ALL_PERMS.filter(k => activePerms.has(k)).length;
-  const allChecked   = checkedCount === totalPerms;
 
   const groupsHtml = PERMISSION_GROUPS.map(g => {
     const groupChecked = g.perms.filter(p => activePerms.has(p.key)).length;
@@ -588,6 +660,8 @@ function renderPermissionsUI() {
     </div>`;
   }).join('');
 
+  const canManage = hasPermission('permissions:manage');
+
   container.innerHTML = `
     <div class="perm-layout">
       <div class="perm-role-list">${tabsHtml}</div>
@@ -599,18 +673,24 @@ function renderPermissionsUI() {
 
         <div class="perm-select-all-row">
           <span>${checkedCount} of ${totalPerms} permissions enabled</span>
-          <div style="display:flex;gap:8px">
+          ${canManage ? `<div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" onclick="toggleAllPerms(false)">Clear All</button>
             <button class="btn btn-ghost btn-sm" onclick="toggleAllPerms(true)">Select All</button>
-          </div>
+          </div>` : ''}
         </div>
 
-        ${groupsHtml}
+        <fieldset ${canManage ? '' : 'disabled'} style="border:none;padding:0;margin:0">
+          ${groupsHtml}
+        </fieldset>
 
+        ${canManage ? `
         <div class="perm-save-bar">
           <span class="perm-save-hint">Changes are not applied until saved.</span>
           <button class="btn btn-blue btn-sm" id="perm-save-btn" onclick="savePermissions()">Save Permissions</button>
-        </div>
+        </div>` : `
+        <div class="perm-save-bar">
+          <span class="perm-save-hint" style="color:var(--text3)">You have view-only access to permissions.</span>
+        </div>`}
       </div>
     </div>`;
 }
@@ -623,7 +703,6 @@ function selectPermRole(id) {
 function toggleAllPerms(checked) {
   document.querySelectorAll('#permissions-container input[type=checkbox]')
     .forEach(cb => cb.checked = checked);
-  // Re-render counts
   const count = checked ? ALL_PERMS.length : 0;
   const el = document.querySelector('.perm-select-all-row span');
   if (el) el.textContent = `${count} of ${ALL_PERMS.length} permissions enabled`;
@@ -639,7 +718,7 @@ async function savePermissions() {
     const role = permRoles.find(r => r._id === activePermRoleId);
     if (role) role.permissions = checked;
     toast('Permissions saved successfully.', 'success');
-    renderPermissionsUI(); // re-render to update counts
+    renderPermissionsUI();
   } catch (e) {
     toast(e.message, 'error');
   } finally {
@@ -654,7 +733,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 
 function showModalError(elId, msg) {
   const el = document.getElementById(elId);
-  el.textContent  = msg;
+  el.textContent   = msg;
   el.style.display = '';
 }
 
@@ -663,7 +742,7 @@ function setBtnLoading(btn, loading, label) {
     btn.disabled  = true;
     btn.innerHTML = '<span class="spinner"></span>';
   } else {
-    btn.disabled  = false;
+    btn.disabled    = false;
     btn.textContent = label;
   }
 }
@@ -675,7 +754,6 @@ function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebarOverlay').classList.toggle('open');
 }
-
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('sidebarOverlay').classList.remove('open');
@@ -685,7 +763,7 @@ function closeSidebar() {
    UTILITIES
 ──────────────────────────────────────────────────── */
 function esc(s) {
-  return String(s)
+  return String(s ?? '')
     .replace(/&/g,  '&amp;')
     .replace(/</g,  '&lt;')
     .replace(/>/g,  '&gt;')
@@ -699,7 +777,7 @@ function fmtDate(iso) {
 }
 
 function userCell(name, email) {
-  const initials = name.slice(0, 2).toUpperCase();
+  const initials = (name || '?').slice(0, 2).toUpperCase();
   return `<div class="user-cell">
     <div class="avatar-sm">${esc(initials)}</div>
     <div>
@@ -726,24 +804,22 @@ function emptyRow(cols, icon, title, desc = '') {
 /* ────────────────────────────────────────────────────
    GLOBAL EVENT LISTENERS
 ──────────────────────────────────────────────────── */
-// Close modals on backdrop click
 document.querySelectorAll('.modal-overlay').forEach(o => {
   o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
 });
 
-// ESC closes modals
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape')
     document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('open'));
 });
 
 /* ────────────────────────────────────────────────────
-   BOOT — auto-login if token exists
+   BOOT — auto-login if token exists in localStorage
 ──────────────────────────────────────────────────── */
 (async () => {
   if (!token) return;
   try {
-    const d    = await api('GET', '/api/auth/me');
+    const d = await api('GET', '/api/auth/me');
     currentUser = d.user;
     enterDashboard();
   } catch {

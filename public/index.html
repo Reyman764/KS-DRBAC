@@ -196,6 +196,7 @@
 
 <!-- ═══════════════ MODALS ═══════════════ -->
 
+<!-- Assign Role Modal — dropdown of all existing roles -->
 <div class="modal-overlay" id="role-modal">
   <div class="modal">
     <div class="modal-title">Assign Role</div>
@@ -212,15 +213,30 @@
   </div>
 </div>
 
+<!-- Create Role Modal — name, description + permission checkboxes -->
 <div class="modal-overlay" id="create-role-modal">
-  <div class="modal">
+  <div class="modal modal-wide">
     <div class="modal-title">Create Role</div>
-    <div class="modal-subtitle">Define a new access role for your team.</div>
+    <div class="modal-subtitle">Define a new access role and set its initial permissions.</div>
     <div class="modal-error" id="create-role-error"></div>
-    <label class="field-label">Role Name</label>
+
+    <label class="field-label">Role Name <span class="req">*</span></label>
     <input class="modal-input" id="new-role-name" type="text" placeholder="e.g. editor, moderator" />
+
     <label class="field-label">Description <span style="opacity:.5;font-size:10px;text-transform:none">(optional)</span></label>
     <input class="modal-input" id="new-role-desc" type="text" placeholder="Brief description of this role" />
+
+    <div class="modal-perm-section">
+      <div class="modal-perm-header">
+        <span class="field-label" style="margin:0">Permissions</span>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-ghost btn-xs" onclick="modalToggleAllPerms('create',false)">Clear</button>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="modalToggleAllPerms('create',true)">Select All</button>
+        </div>
+      </div>
+      <div id="create-role-perms" class="modal-perm-grid"></div>
+    </div>
+
     <div class="modal-footer">
       <button class="btn btn-ghost btn-sm" onclick="closeModal('create-role-modal')">Cancel</button>
       <button class="btn btn-blue btn-sm" onclick="submitCreateRole()" id="create-role-btn">Create Role</button>
@@ -228,15 +244,30 @@
   </div>
 </div>
 
+<!-- Edit Role Modal — name, description + permission checkboxes -->
 <div class="modal-overlay" id="edit-role-modal">
-  <div class="modal">
+  <div class="modal modal-wide">
     <div class="modal-title">Edit Role</div>
-    <div class="modal-subtitle" id="edit-role-subtitle">Update role details.</div>
+    <div class="modal-subtitle" id="edit-role-subtitle">Update role details and permissions.</div>
     <div class="modal-error" id="edit-role-error"></div>
-    <label class="field-label">Display Name</label>
+
+    <label class="field-label">Display Name <span class="req">*</span></label>
     <input class="modal-input" id="edit-role-name" type="text" placeholder="Display name" />
+
     <label class="field-label">Description <span style="opacity:.5;font-size:10px;text-transform:none">(optional)</span></label>
     <input class="modal-input" id="edit-role-desc" type="text" placeholder="Brief description" />
+
+    <div class="modal-perm-section">
+      <div class="modal-perm-header">
+        <span class="field-label" style="margin:0">Permissions</span>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-ghost btn-xs" onclick="modalToggleAllPerms('edit',false)">Clear</button>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="modalToggleAllPerms('edit',true)">Select All</button>
+        </div>
+      </div>
+      <div id="edit-role-perms" class="modal-perm-grid"></div>
+    </div>
+
     <div class="modal-footer">
       <button class="btn btn-ghost btn-sm" onclick="closeModal('edit-role-modal')">Cancel</button>
       <button class="btn btn-blue btn-sm" onclick="submitEditRole()" id="edit-role-btn">Save Changes</button>
@@ -244,6 +275,7 @@
   </div>
 </div>
 
+<!-- Confirm Delete Modal -->
 <div class="modal-overlay" id="delete-modal">
   <div class="modal">
     <div class="modal-title">Confirm Delete</div>
